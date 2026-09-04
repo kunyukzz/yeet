@@ -1,10 +1,16 @@
 // Your Embedded Executable Tool
 
+#ifndef YEET_H
+#define YEET_H
+
+// #ifdef YEET_IMPL
+
+#include <dirent.h>   // readdir
 #include <ctype.h>    // tolower
 #include <stdarg.h>   // va_arg, va_list, va_start, va_end
 #include <stdio.h>    // snprintf
 #include <stdlib.h>   // calloc
-#include <string.h>   // strncpy
+#include <string.h>   // strncpy, strrchr
 #include <sys/stat.h> // stat, mkdir
 
 #define MAX_FLAGS 64
@@ -48,6 +54,7 @@ static yeet_builder *g_yeet = {0};
 
 // public API
 void yeet_init(void);
+void yeet_reset(void);
 
 void yeet_compiler_use(const char *compiler, const char *c_version);
 void yeet_compiler_flags(const char *flag, ...);
@@ -55,10 +62,14 @@ void yeet_compiler_linkers(const char *linker, ...);
 
 void yeet_target(const char *name, const char *binary_path, const char *object_path);
 void yeet_source_all(const char *source_path);
+void yeet_source_exclude(const char *source_path, const char *exclude_path);
+void yeet_source_spesific(const char *source_path, const char **files);
 
 void yeet_build(void);
 
-// helper
+// ==================================== HELPER ================================== //
+
+/* string helper */
 static inline void _str_lower(char *str)
 {
     while (*str)
@@ -76,6 +87,21 @@ static inline void _str_copy(char *dest, const char *src, size_t size)
     dest[size - 1] = '\0';
 }
 
+static inline char *_str_dup(const char *src)
+{
+    if (!src) return NULL;
+
+    size_t len = strlen(src) + 1;
+
+    char *copy = malloc(len);
+    if (!copy) return NULL;
+
+    memcpy(copy, src, len);
+
+    return copy;
+}
+
+/* compiler flag helper */
 static void _add_flag(const char *flag)
 {
     if (!g_yeet || !flag) return;
@@ -110,11 +136,44 @@ static void _add_linker(const char *linker)
     g_yeet->compiler_cfg.linker_count++;
 }
 
+/* file management helper */
 static int _create_dir(const char *path)
 {
     struct stat st = {0};
     if (stat(path, &st) == -1) return mkdir(path, 0777);
     return 0;
+}
+
+static void _scan_dir(const char *path, const char *exclude)
+{
+    // NOT YET IMPLEMENTED
+    const char *ex = "xxx";
+    exclude = ex;
+
+    DIR *dir = opendir(path);
+    if (!dir) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL)
+    {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        // Build full path first
+        char full_path[MAX_PATH_LEN];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        // Check if its directory
+        struct stat buffstat;
+        if (stat(full_path, &buffstat) == 0 && S_ISDIR(buffstat.st_mode))
+        {
+            _scan_dir(full_path, exclude);
+            printf("full_path = %s\n", full_path);
+            continue;
+        }
+        printf("%s\n", entry->d_name);
+    }
+
+    closedir(dir);
 }
 
 static void _set_source(const char *path)
@@ -130,12 +189,29 @@ static void _set_source(const char *path)
 
     _str_copy(g_yeet->sources.directory, path, MAX_PATH_LEN);
 
-    for (int i = 0; i < g_yeet->sources.count; ++i)
+    g_yeet->sources.count = 0;
+}
+
+static inline int _validate_data(void)
+{
+    if (g_yeet->compiler_cfg.compiler[0] == '\0')
     {
-        free(g_yeet->sources.files[i]);
+        printf("No compiler specified!\n");
+        return 0;
+    }
+    if (g_yeet->target_name[0] == '\0' || g_yeet->target_path.binary[0] == '\0' ||
+        g_yeet->target_path.object[0] == '\0')
+    {
+        printf("No target name, binary & object path specified!\n");
+        return 0;
+    }
+    if (g_yeet->sources.count == 0)
+    {
+        printf("No source files added!\n");
+        return 0;
     }
 
-    g_yeet->sources.count = 0;
+    return 1;
 }
 
 /* CORE API IMPLEMENTATION */
@@ -220,10 +296,42 @@ void yeet_source_all(const char *source_path)
     g_yeet->sources.exclude[0] = '\0';
 }
 
+void yeet_source_exclude(const char *source_path, const char *exclude_path)
+{
+    if (!source_path) return;
+
+    _set_source(source_path);
+
+    if (exclude_path)
+        _str_copy(g_yeet->sources.exclude, exclude_path, sizeof(g_yeet->sources.exclude));
+    else
+        g_yeet->sources.exclude[0] = '\0';
+}
+
+void yeet_source_spesific(const char *source_path, const char **files)
+{
+    if (!source_path || !files) return;
+
+    _set_source(source_path);
+
+    g_yeet->sources.exclude[0] = '\0';
+
+    g_yeet->sources.count = 0;
+    for (int i = 0; files[i] && i < MAX_SRC; ++i)
+    {
+        g_yeet->sources.files[i] = _str_dup(files[i]);
+
+        // TODO: make platform agnostic
+        snprintf(g_yeet->sources.storage[i], MAX_PATH_LEN, "%s/%s", source_path, files[i]);
+        g_yeet->sources.count++;
+    }
+}
+
 // actual building logic
 void yeet_build(void)
 {
     // NOT YET IMPLEMENTED!!
+    /*
     printf("Compiler: %s, Version: %s\n", g_yeet->compiler_cfg.compiler, g_yeet->compiler_cfg.version);
 
     printf("Flags (%d):\n", g_yeet->compiler_cfg.flag_count);
@@ -239,14 +347,50 @@ void yeet_build(void)
     }
 
     printf("Name: %s\n", g_yeet->target_name);
-    printf("Binary Path: %s, object Path: %s\n", g_yeet->target_path.binary, g_yeet->target_path.binary);
+    printf("Binary Path: %s, object Path: %s\n", g_yeet->target_path.binary, g_yeet->target_path.object);
 
     printf("Source Path: %s\n", g_yeet->sources.directory);
     for (int i = 0; i < g_yeet->sources.count; ++i)
     {
-        printf(" [%d] %s\n", i, *g_yeet->sources.files);
+        printf(" [%d] %s\n", i, g_yeet->sources.files[i]);
+    }
+
+    printf("Source: %s, exclude: %s\n", g_yeet->sources.directory, g_yeet->sources.exclude);
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->sources.files[i]);
+    }
+    */
+
+    printf("Source: %s\n", g_yeet->sources.directory);
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->sources.files[i]);
+    }
+
+    _validate_data();
+    _scan_dir(g_yeet->sources.directory, g_yeet->sources.exclude);
+
+    // freeing list of source count
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        free(g_yeet->sources.files[i]);
+        g_yeet->sources.files[i] = NULL;
     }
 
     free(g_yeet);
     g_yeet = NULL;
 }
+
+void yeet_reset(void)
+{
+    // freeing list of source count
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        free(g_yeet->sources.files[i]);
+        g_yeet->sources.files[i] = NULL;
+    }
+}
+
+// #endif
+#endif

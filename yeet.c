@@ -1,3 +1,4 @@
+#define YEET_IMPL
 #include "yeet.h"
 
 int main(void)
@@ -9,6 +10,10 @@ int main(void)
 
     yeet_target("lalala", "test_dir/binary", "test_dir/obj");
     yeet_source_all("test_dir/src");
+    // yeet_source_exclude("test_dir", "test");
+
+    // const char *my_file[] = {"a", "b", "c", "d", NULL};
+    // yeet_source_spesific("test_dir/src", my_file);
 
     yeet_build();
 }

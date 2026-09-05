@@ -273,7 +273,7 @@ static char *_generate_object_path(const char *source_path, char *obj_buffer)
     return obj_buffer;
 }
 
-static int _compile_sources(const char **object_files, int *obj_count)
+static int compile_sources(const char **object_files, int *obj_count)
 {
     *obj_count = 0;
     for (int i = 0; i < g_yeet->sources.count; ++i)
@@ -463,6 +463,38 @@ void yeet_source_spesific(const char *source_path, const char **files)
 // actual building logic
 void yeet_build(void)
 {
+    // NOT YET IMPLEMENTED!!
+    /*
+    printf("Compiler: %s, Version: %s\n", g_yeet->compiler_cfg.compiler, g_yeet->compiler_cfg.version);
+
+    printf("Flags (%d):\n", g_yeet->compiler_cfg.flag_count);
+    for (int i = 0; i < g_yeet->compiler_cfg.flag_count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->compiler_cfg.flags[i]);
+    }
+
+    printf("Linkers (%d):\n", g_yeet->compiler_cfg.linker_count);
+    for (int i = 0; i < g_yeet->compiler_cfg.linker_count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->compiler_cfg.linkers[i]);
+    }
+
+    printf("Name: %s\n", g_yeet->target_name);
+    printf("Binary Path: %s, object Path: %s\n", g_yeet->target_path.binary, g_yeet->target_path.object);
+
+    printf("Source Path: %s\n", g_yeet->sources.directory);
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->sources.files[i]);
+    }
+
+    printf("Source: %s, exclude: %s\n", g_yeet->sources.directory, g_yeet->sources.exclude);
+    for (int i = 0; i < g_yeet->sources.count; ++i)
+    {
+        printf(" [%d] %s\n", i, g_yeet->sources.files[i]);
+    }
+    */
+
     _scan_dir_recursive(g_yeet->sources.directory, g_yeet->sources.exclude);
     _validate_data();
 
@@ -475,20 +507,19 @@ void yeet_build(void)
 
     const char *obj_files[MAX_SRC];
     int obj_count = 0;
-    if (!_compile_sources(obj_files, &obj_count)) return;
-
-    // freeing list of object files
-    for (int i = 0; i < obj_count; ++i)
-    {
-        free((void *)obj_files[i]);
-        obj_files[i] = NULL;
-    }
+    if (!compile_sources(obj_files, &obj_count)) return;
 
     // freeing list of source count
     for (int i = 0; i < g_yeet->sources.count; ++i)
     {
         free(g_yeet->sources.files[i]);
         g_yeet->sources.files[i] = NULL;
+    }
+
+    for (int i = 0; i < obj_count; ++i)
+    {
+        free(object_files[i]);
+        object_files[i] = NULL;
     }
 }
 

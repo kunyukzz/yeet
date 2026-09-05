@@ -16,4 +16,5 @@ int main(void)
     // yeet_source_spesific("test_dir/src", my_file);
 
     yeet_build();
+    yeet_reset();
 }

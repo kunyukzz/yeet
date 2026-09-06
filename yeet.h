@@ -12,6 +12,8 @@
 #include <stdlib.h>   // calloc
 #include <string.h>   // strncpy, strrchr
 #include <sys/stat.h> // stat, mkdir
+#include <sys/wait.h> // pid_t, waitpid
+#include <unistd.h>   // fork, execvp, _exit
 
 #define MAX_FLAGS 64
 #define MAX_FLAG_LEN 32
@@ -41,6 +43,7 @@ typedef struct {
     char storage[MAX_SRC][MAX_PATH_LEN];
     char *files[MAX_SRC]; // for multi-build in single run
     int count;
+    int generate_deps;
 } source_t;
 
 typedef struct {
@@ -186,8 +189,7 @@ static int _exclude_dir(const char *full_path, const char *exclude)
 
     // check the relative path against patterns
     char patterns[MAX_PATH_LEN];
-    strncpy(patterns, exclude, sizeof(patterns) - 1);
-    patterns[sizeof(patterns) - 1] = '\0';
+    _str_copy(patterns, exclude, MAX_PATH_LEN);
 
     char *pattern = strtok(patterns, ",");
     while (pattern)
@@ -241,7 +243,6 @@ static void _scan_dir_recursive(const char *path, const char *exclude)
             g_yeet->sources.files[g_yeet->sources.count] = _str_dup(rel_path);
             _str_copy(g_yeet->sources.storage[g_yeet->sources.count], full_path, MAX_PATH_LEN);
 
-            g_yeet->sources.storage[g_yeet->sources.count][MAX_PATH_LEN - 1] = '\0';
             g_yeet->sources.count++;
         }
     }
@@ -273,25 +274,76 @@ static char *_generate_object_path(const char *source_path, char *obj_buffer)
     return obj_buffer;
 }
 
+static int _run_process(char *const argv[])
+{
+    pid_t pid = fork();
+
+    if (pid == 0)
+    {
+        // Child: replace itself with the compiler program
+        execvp(argv[0], argv);
+        perror("execvp failed");
+        _exit(1);
+    }
+    else if (pid > 0)
+    {
+        // Parent: wait for the compiler to finish
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return status;
+    }
+    else
+    {
+        perror("fork failed");
+        return -1;
+    }
+}
+
+static int _add_dependency(const char *source_path, const char *object_path)
+{
+    char *argv[128] = {0};
+    int argc = 0;
+
+    argv[argc++] = g_yeet->compiler_cfg.compiler;
+    argv[argc++] = g_yeet->compiler_cfg.version;
+
+    for (int i = 0; i < g_yeet->compiler_cfg.flag_count; ++i)
+    {
+        argv[argc++] = g_yeet->compiler_cfg.flags[i];
+    }
+
+    // for (int i = 0; i < g_yeet->includes.include_count; ++i)
+    //{
+    //     argv[argc++] = g_yeet->includes.include_dirs[i];
+    // }
+
+    argv[argc++] = "-o";
+    argv[argc++] = (char *)object_path;
+    argv[argc++] = (char *)source_path;
+    argv[argc++] = "-c";
+    argv[argc] = NULL;
+
+    return _run_process(argv);
+}
+
 static int _compile_sources(const char **object_files, int *obj_count)
 {
     *obj_count = 0;
     for (int i = 0; i < g_yeet->sources.count; ++i)
     {
+        char src_path[MAX_PATH_LEN];
         char obj_name[MAX_PATH_LEN];
         char obj_path[MAX_PATH_LEN];
         char obj_dir[MAX_PATH_LEN];
 
-        const char *src = g_yeet->sources.files[i];
+        // resolve sources relative path to absolute path
+        const char *src_rel = g_yeet->sources.files[i];
+        snprintf(src_path, sizeof(src_path), "%s/%s", g_yeet->sources.directory, src_rel);
 
-        _generate_object_path(src, obj_name);
-        snprintf(obj_path, sizeof(obj_path), "%s/%s", g_yeet->target_path.binary, obj_name);
+        _generate_object_path(src_rel, obj_name);
+        snprintf(obj_path, sizeof(obj_path), "%s/%s", g_yeet->target_path.object, obj_name);
 
         _str_copy(obj_dir, obj_path, MAX_PATH_LEN);
-
-        printf("object path = %s\n", obj_path);
-        printf("object dir = %s\n", obj_dir);
-        printf("object name = %s\n", obj_name);
 
         char *slash = strrchr(obj_dir, '/');
         if (slash)
@@ -300,7 +352,13 @@ static int _compile_sources(const char **object_files, int *obj_count)
             _create_dir_recursive(obj_dir);
         }
 
-        printf("Compiling: %s...\n", src);
+        printf("Compiling: %s...\n", src_path);
+
+        if (_add_dependency(src_path, obj_path) != 0)
+        {
+            fprintf(stderr, "Compilation failed for: %s\n", src_path);
+            return 0;
+        }
 
         object_files[*obj_count] = _str_dup(obj_path);
         (*obj_count)++;
@@ -321,6 +379,7 @@ static void _set_source(const char *path)
     }
 
     _str_copy(g_yeet->sources.directory, path, MAX_PATH_LEN);
+    printf("directory = %s\n", g_yeet->sources.directory);
 
     g_yeet->sources.count = 0;
 }
@@ -365,8 +424,7 @@ void yeet_init(void)
 // compiler logic
 void yeet_compiler_use(const char *compiler, const char *c_version)
 {
-    strncpy(g_yeet->compiler_cfg.compiler, compiler, sizeof(g_yeet->compiler_cfg.compiler) - 1);
-    g_yeet->compiler_cfg.compiler[sizeof(g_yeet->compiler_cfg.compiler) - 1] = '\0';
+    _str_copy(g_yeet->compiler_cfg.compiler, compiler, sizeof(g_yeet->compiler_cfg.compiler));
     _str_lower(g_yeet->compiler_cfg.compiler);
 
     snprintf(g_yeet->compiler_cfg.version, sizeof(g_yeet->compiler_cfg.version), "-std=%s", c_version);
@@ -414,10 +472,10 @@ void yeet_target(const char *name, const char *binary_path, const char *object_p
     _str_copy(g_yeet->target_name, name, sizeof(g_yeet->target_name));
 
     _str_copy(g_yeet->target_path.binary, binary_path, sizeof(g_yeet->target_path.binary));
-    _create_dir(binary_path);
+    // _create_dir(binary_path);
 
     _str_copy(g_yeet->target_path.object, object_path, sizeof(g_yeet->target_path.object));
-    _create_dir(object_path);
+    // _create_dir(object_path);
 }
 
 void yeet_source_all(const char *source_path)
